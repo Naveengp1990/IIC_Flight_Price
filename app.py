@@ -363,14 +363,14 @@ with st.form("prediction_form"):
 # Prediction
 # ============================================================
 
+# ============================================================
+# Prediction Result
+# ============================================================
+
 if submitted:
 
     if not flight.strip():
-
-        st.warning(
-            "Please enter a flight code."
-        )
-
+        st.warning("Please enter a flight code.")
         st.stop()
 
     input_data = pd.DataFrame(
@@ -390,58 +390,139 @@ if submitted:
         ]
     )
 
-    # Same cleaning used during training.
-    input_data = clean_categorical_columns(
-        input_data
-    )
+    # Clean input
+    input_data = clean_categorical_columns(input_data)
 
-    input_data = input_data[
-        FEATURE_COLS
-    ]
+    # Keep feature order exactly the same as training
+    input_data = input_data[FEATURE_COLS]
 
-    # --------------------------------------------------------
-    # Preprocessing only
-    # --------------------------------------------------------
+    # Apply saved preprocessing
+    X_input = preprocessor.transform(input_data)
 
-    X_input = preprocessor.transform(
-        input_data
-    )
-
-    # --------------------------------------------------------
-    # Instant prediction
-    # --------------------------------------------------------
-
-    prediction = model.predict(
-        X_input
-    )[0]
+    # Predict using saved XGBoost model
+    prediction = model.predict(X_input)[0]
 
     prediction = float(prediction)
 
+    # ========================================================
+    # Elegant Prediction Card
+    # ========================================================
+
+    st.markdown(
+        """
+        <style>
+
+        .prediction-card {
+            background: linear-gradient(
+                135deg,
+                #f8fbff 0%,
+                #eef5ff 100%
+            );
+
+            border: 1px solid #d7e3f4;
+
+            border-radius: 18px;
+
+            padding: 28px;
+
+            margin-top: 25px;
+            margin-bottom: 20px;
+
+            text-align: center;
+
+            box-shadow:
+                0 6px 20px rgba(0, 0, 0, 0.06);
+        }
+
+        .prediction-label {
+            font-size: 18px;
+            font-weight: 500;
+            color: #5f6b7a;
+
+            margin-bottom: 8px;
+        }
+
+        .prediction-price {
+            font-size: 42px;
+            font-weight: 700;
+            color: #1f2937;
+
+            margin: 5px 0;
+        }
+
+        .prediction-note {
+            font-size: 14px;
+            color: #6b7280;
+
+            margin-top: 8px;
+        }
+
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
     st.markdown(
         f"""
-        <div class="prediction-box">
+        <div class="prediction-card">
 
-            <h3>Predicted Flight Price</h3>
+            <div class="prediction-label">
+                ✈️ Estimated Flight Ticket Price
+            </div>
 
-            <h1>₹ {prediction:,.2f}</h1>
+            <div class="prediction-price">
+                ₹ {prediction:,.2f}
+            </div>
+
+            <div class="prediction-note">
+                Predicted using the trained XGBoost regression model
+            </div>
 
         </div>
         """,
-        unsafe_allow_html=True,
+        unsafe_allow_html=True
     )
 
     st.success(
-        "Prediction generated successfully "
-        "using the pre-trained XGBoost model."
+        "Prediction generated successfully."
     )
 
-    with st.expander(
-        "View input used for prediction"
-    ):
+    # ========================================================
+    # Prediction Details
+    # ========================================================
+
+    st.subheader("Prediction Details")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric(
+            label="Predicted Price",
+            value=f"₹ {prediction:,.2f}"
+        )
+
+    with col2:
+        st.metric(
+            label="Model",
+            value="XGBoost"
+        )
+
+    with col3:
+        st.metric(
+            label="Kaggle R²",
+            value="0.982"
+        )
+
+    # ========================================================
+    # Input Details
+    # ========================================================
+
+    with st.expander("🔎 View Flight Details"):
 
         st.dataframe(
             input_data,
             use_container_width=True,
+            hide_index=True
         )
 
 
