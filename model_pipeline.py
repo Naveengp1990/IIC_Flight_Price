@@ -7,6 +7,7 @@ used for the Kaggle solution, packaged for Streamlit deployment.
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
@@ -36,12 +37,37 @@ TARGET_COL = "price"
 
 
 def clean_categorical_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Lowercase categorical values without modifying the original dataframe."""
+    """
+    Clean categorical columns while preserving missing values as np.nan.
+
+    Using pandas StringDtype can create pandas.NA values. Some versions of
+    scikit-learn/XGBoost can encounter:
+        TypeError: boolean value of NA is ambiguous
+
+    Therefore, categorical columns are converted to object dtype and missing
+    values are normalized to numpy.nan before the sklearn pipeline receives them.
+    """
     df = df.copy()
 
-    for col in OHE_COLS + ORDINAL_COLS:
+    categorical_cols = OHE_COLS + ORDINAL_COLS
+
+    for col in categorical_cols:
         if col in df.columns:
-            df[col] = df[col].astype("string").str.strip().str.lower()
+            # Convert to ordinary object dtype rather than pandas StringDtype.
+            df[col] = df[col].astype(object)
+
+            # Normalize pandas.NA / None / NaN to np.nan.
+            df[col] = df[col].where(pd.notna(df[col]), np.nan)
+
+            # Lowercase only non-missing values.
+            df[col] = df[col].map(
+                lambda value: value.strip().lower()
+                if isinstance(value, str)
+                else value
+            )
+
+            # Final safety conversion for any remaining pandas missing marker.
+            df[col] = df[col].where(pd.notna(df[col]), np.nan)
 
     return df
 
