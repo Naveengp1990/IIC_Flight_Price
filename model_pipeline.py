@@ -1,14 +1,21 @@
 """
-Flight Price Prediction - Model Pipeline
+Flight Price Prediction - Training Pipeline
 
-This module contains the same preprocessing and XGBoost model configuration
-used for the Kaggle solution, packaged for Streamlit deployment.
+Run this file once to:
+1. Fit the preprocessing pipeline on train.csv
+2. Save the fitted preprocessing pipeline as process.pkl
+3. Train XGBoost on the transformed data
+4. Save the trained XGBoost model as xgb_model.pkl
+
+After these files are created, Streamlit does NOT retrain the model.
 """
 
 from pathlib import Path
+import pickle
 
 import numpy as np
 import pandas as pd
+
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
@@ -16,7 +23,17 @@ from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder
 from xgboost import XGBRegressor
 
 
-NUMERIC_COLS = ["duration", "days_left"]
+BASE_DIR = Path(__file__).resolve().parent
+
+TRAIN_FILE = BASE_DIR / "train.csv"
+PROCESS_FILE = BASE_DIR / "process.pkl"
+MODEL_FILE = BASE_DIR / "xgb_model.pkl"
+
+
+NUMERIC_COLS = [
+    "duration",
+    "days_left",
+]
 
 OHE_COLS = [
     "airline",
@@ -38,73 +55,96 @@ TARGET_COL = "price"
 
 def clean_categorical_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Clean categorical columns while preserving missing values as np.nan.
+    Clean categorical columns and convert pandas.NA to numpy.nan.
 
-    Using pandas StringDtype can create pandas.NA values. Some versions of
-    scikit-learn/XGBoost can encounter:
-        TypeError: boolean value of NA is ambiguous
-
-    Therefore, categorical columns are converted to object dtype and missing
-    values are normalized to numpy.nan before the sklearn pipeline receives them.
+    This prevents:
+        boolean value of NA is ambiguous
     """
+
     df = df.copy()
 
     categorical_cols = OHE_COLS + ORDINAL_COLS
 
     for col in categorical_cols:
-        if col in df.columns:
-            # Convert to ordinary object dtype rather than pandas StringDtype.
-            df[col] = df[col].astype(object)
 
-            # Normalize pandas.NA / None / NaN to np.nan.
-            df[col] = df[col].where(pd.notna(df[col]), np.nan)
+        if col not in df.columns:
+            continue
 
-            # Lowercase only non-missing values.
-            df[col] = df[col].map(
-                lambda value: value.strip().lower()
+        # Use object dtype instead of pandas StringDtype.
+        df[col] = df[col].astype(object)
+
+        # Convert missing values to numpy.nan.
+        df[col] = df[col].where(
+            pd.notna(df[col]),
+            np.nan
+        )
+
+        # Lowercase only valid string values.
+        df[col] = df[col].map(
+            lambda value:
+                value.strip().lower()
                 if isinstance(value, str)
                 else value
-            )
+        )
 
-            # Final safety conversion for any remaining pandas missing marker.
-            df[col] = df[col].where(pd.notna(df[col]), np.nan)
+        # Final missing-value normalization.
+        df[col] = df[col].where(
+            pd.notna(df[col]),
+            np.nan
+        )
 
     return df
 
 
-def create_preprocessor() -> ColumnTransformer:
-    """Create the preprocessing pipeline used by the Kaggle model."""
-    return ColumnTransformer(
+def create_preprocessor():
+    """
+    Create the preprocessing pipeline.
+    """
+
+    preprocessor = ColumnTransformer(
         transformers=[
+
             (
                 "num",
-                SimpleImputer(strategy="median"),
+                SimpleImputer(
+                    strategy="median"
+                ),
                 NUMERIC_COLS,
             ),
+
             (
                 "cat",
                 Pipeline(
                     steps=[
                         (
                             "imputer",
-                            SimpleImputer(strategy="most_frequent"),
+                            SimpleImputer(
+                                strategy="most_frequent"
+                            ),
                         ),
+
                         (
                             "encoder",
-                            OneHotEncoder(handle_unknown="ignore"),
+                            OneHotEncoder(
+                                handle_unknown="ignore"
+                            ),
                         ),
                     ]
                 ),
                 OHE_COLS,
             ),
+
             (
                 "ord",
                 Pipeline(
                     steps=[
                         (
                             "imputer",
-                            SimpleImputer(strategy="most_frequent"),
+                            SimpleImputer(
+                                strategy="most_frequent"
+                            ),
                         ),
+
                         (
                             "encoder",
                             OrdinalEncoder(
@@ -119,10 +159,15 @@ def create_preprocessor() -> ColumnTransformer:
         ]
     )
 
+    return preprocessor
 
-def create_model() -> Pipeline:
-    """Create the complete preprocessing + XGBoost pipeline."""
-    xgb_model = XGBRegressor(
+
+def create_xgb_model():
+    """
+    XGBoost configuration used for the Kaggle solution.
+    """
+
+    return XGBRegressor(
         n_estimators=1000,
         max_depth=8,
         learning_rate=0.06326317249374157,
@@ -137,30 +182,94 @@ def create_model() -> Pipeline:
         objective="reg:squarederror",
     )
 
-    return Pipeline(
-        steps=[
-            ("preprocessor", create_preprocessor()),
-            ("xgb", xgb_model),
-        ]
+
+def train_and_save():
+    """
+    Train preprocessing + XGBoost and save both separately.
+    """
+
+    print("=" * 60)
+    print("FLIGHT PRICE MODEL TRAINING")
+    print("=" * 60)
+
+    if not TRAIN_FILE.exists():
+        raise FileNotFoundError(
+            f"Could not find {TRAIN_FILE}"
+        )
+
+    # --------------------------------------------------------
+    # Load dataset
+    # --------------------------------------------------------
+    train = pd.read_csv(TRAIN_FILE)
+
+    print(f"Training data shape: {train.shape}")
+
+    # --------------------------------------------------------
+    # Clean categorical columns
+    # --------------------------------------------------------
+    train = clean_categorical_columns(train)
+
+    X = train[FEATURE_COLS].copy()
+    y = train[TARGET_COL].copy()
+
+    # --------------------------------------------------------
+    # Fit preprocessing
+    # --------------------------------------------------------
+    print("\nFitting preprocessing pipeline...")
+
+    preprocessor = create_preprocessor()
+
+    X_processed = preprocessor.fit_transform(X)
+
+    print(
+        "Processed feature shape:",
+        X_processed.shape
     )
 
+    # --------------------------------------------------------
+    # Save fitted preprocessing
+    # --------------------------------------------------------
+    with open(PROCESS_FILE, "wb") as file:
+        pickle.dump(
+            preprocessor,
+            file,
+            protocol=pickle.HIGHEST_PROTOCOL,
+        )
 
-def load_training_data(data_path: str | Path) -> tuple[pd.DataFrame, pd.Series]:
-    """Load and prepare training data."""
-    df = pd.read_csv(data_path)
-    df = clean_categorical_columns(df)
+    print(
+        f"Saved preprocessing pipeline → {PROCESS_FILE.name}"
+    )
 
-    X = df[FEATURE_COLS].copy()
-    y = df[TARGET_COL].copy()
+    # --------------------------------------------------------
+    # Train XGBoost
+    # --------------------------------------------------------
+    print("\nTraining XGBoost model...")
 
-    return X, y
+    model = create_xgb_model()
+
+    model.fit(
+        X_processed,
+        y
+    )
+
+    # --------------------------------------------------------
+    # Save trained model
+    # --------------------------------------------------------
+    with open(MODEL_FILE, "wb") as file:
+        pickle.dump(
+            model,
+            file,
+            protocol=pickle.HIGHEST_PROTOCOL,
+        )
+
+    print(
+        f"Saved trained model → {MODEL_FILE.name}"
+    )
+
+    print("\n" + "=" * 60)
+    print("TRAINING COMPLETED SUCCESSFULLY")
+    print("=" * 60)
 
 
-def train_model(data_path: str | Path) -> Pipeline:
-    """Train the final model on the complete training dataset."""
-    X, y = load_training_data(data_path)
-
-    model = create_model()
-    model.fit(X, y)
-
-    return model
+if __name__ == "__main__":
+    train_and_save()
